@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>custom-chart</title>
+
+    <script type="text/javascript" src="/apps/2.0rc1/sdk-debug.js"></script>
+
+
+
+    <script type="text/javascript">
+        Rally.onReady(function () {
+(function() {
+  Ext.define('CustomChartApp', {
+    extend: 'Rally.app.App',
+    componentCls: 'app',
+    config: {
+      defaultSettings: {
+        chartTitle: 'Story Size Versus Cycle Time',
+        chartTheme: 'DarkBlue',
+        type: 'HierarchicalRequirement',
+        tooltipTpl: '<a target="_blank" href="{point.detailUrl}">{point.id}</a><br>Estimate: {point.x}<br>Cycle Time: {point.y}<br>End Date: {point.lastDate}',
+        showTrendLine: true,
+        fetchFields: 'PlanEstimate,ScheduleState',
+        xAxisLabel: 'Estimated Size',
+        yAxisLabel: 'Cycle Time!',
+        xAxis: {
+          min: function() {
+            return this.down('#storySizeField').getValues()[0];
+          },
+          labels: {
+            enabled: function() {
+              return !this.isSingleStorySize();
+            }
+          },
+          title: {
+            text: function() {
+              if (this.isSingleStorySize()) {
+                return '';
+              } else {
+                return 'Estimated Size';
+              }
+            }
+          }
+        },
+        yAxis: {
+          title: {
+            text: 'Cycle Time'
+          }
+        },
+        xAxisDataTransformer: function(snapshotsByOid) {
+          var data;
+          data = {};
+          _.each(snapshotsByOid, function(snapshots, oid) {
+            return data[oid] = snapshots[snapshots.length - 1].PlanEstimate || 0;
+          });
+          return data;
+        },
+        yAxisDataTransformer: function(snapshotsByOid) {
+          var MS_TO_DAYS, data;
+          MS_TO_DAYS = 1000 * 60 * 60 * 24;
+          data = {};
+          _.each(snapshotsByOid, function(snapshots, oid) {
+            var cycletime, dateLastStateValidFrom, dateLastStateValidTo, lastState;
+            dateLastStateValidFrom = snapshots[0]._ValidFrom;
+            dateLastStateValidTo = snapshots[0]._ValidTo;
+            lastState = snapshots[0].ScheduleState;
+            cycletime = 0;
+            _.each(snapshots, function(snapshot) {
+              if (snapshot.ScheduleState !== lastState) {
+                cycletime += new Date(dateLastStateValidTo) - new Date(dateLastStateValidFrom);
+                lastState = snapshot.ScheduleState;
+                return dateLastStateValidFrom = snapshot._ValidFrom;
+              } else {
+                return dateLastStateValidTo = snapshot._ValidTo;
+              }
+            });
+            return data[oid] = cycletime / MS_TO_DAYS;
+          });
+          return data;
+        },
+        filters: [
+          function(item) {
+            var startEstimate, stopEstimate, _ref, _ref1;
+            _ref = this.controls.down('#storySizeField').getValues(), startEstimate = _ref[0], stopEstimate = _ref[1];
+            return (startEstimate < (_ref1 = item.PlanEstimate) && _ref1 < stopEstimate);
+          }, function(item) {
+            var endingStateValue, itemStateValue, startingStateValue;
+            startingStateValue = parseInt(this.scheduleStates[this.controls.down('#startingStateField').value], 10);
+            endingStateValue = parseInt(this.scheduleStates[this.controls.down('#endingStateField').value], 10);
+            itemStateValue = parseInt(this.scheduleStates[item.ScheduleState], 10);
+            return (startingStateValue < itemStateValue && itemStateValue < endingStateValue);
+          }
+        ],
+        helpers: {
+          isSingleStorySize: function() {
+            var storySizeFieldValues;
+            storySizeFieldValues = this.down('#storySizeField').getValues();
+            return storySizeFieldValues[0] === storySizeFieldValues[1];
+          }
+        },
+        additionalCode: [
+          function() {
+            var me;
+            me = this;
+            return Rally.data.ModelFactory.getModel({
+              type: this.artifactType === 'HierarchicalRequirement' ? 'UserStory' : artifactType,
+              success: function(model) {
+                var field;
+                field = model.getField('ScheduleState');
+                return field.getAllowedValueStore().load({
+                  callback: function(allowedValues) {
+                    return me.scheduleStates = _(allowedValues).pluck('data').pluck('StringValue').invert().value();
+                  }
+                });
+              }
+            });
+          }
+        ],
+        controls: [
+          {
+            fieldLabel: 'Starting State',
+            itemId: 'startingStateField',
+            padding: '5px 0 5px 20px',
+            xtype: 'rallyfieldvaluecombobox',
+            model: 'UserStory',
+            field: 'ScheduleState'
+          }, {
+            fieldLabel: 'Ending State',
+            itemId: 'endingStateField',
+            padding: '5px 0 5px 20px',
+            xtype: 'rallyfieldvaluecombobox',
+            model: 'UserStory',
+            field: 'ScheduleState',
+            defaultSelectionToFirst: false
+          }, {
+            fieldLabel: 'Story Size',
+            itemId: 'storySizeField',
+            padding: '5px 0 5px 20px',
+            xtype: 'multislider',
+            width: 255,
+            values: [0, 100],
+            minValue: 0,
+            maxValue: 100
+          }
+        ]
+      }
+    },
+    items: [
+      {
+        xtype: 'container',
+        itemId: 'chartcontainer',
+        height: '440px'
+      }, {
+        xtype: 'container',
+        layout: 'hbox',
+        items: [
+          {
+            margin: 20,
+            xtype: 'container',
+            itemId: 'controls',
+            items: []
+          }, {
+            xtype: 'component',
+            itemId: 'stats',
+            style: 'margin: 30px 20px',
+            tpl: "<table>\n  <tr><td>Total Data Points: </td><td>&nbsp;&nbsp;{totalDataPoints}</tr>\n</table>"
+          }
+        ]
+      }
+    ],
+    initComponent: function() {
+      var _ref;
+      this.callParent(arguments);
+      this._hydrateControls();
+      this._hydrateHelpers();
+      if ((_ref = this.down('#updateButton')) != null) {
+        _ref.on('click', this.updateChart, this);
+      }
+      return this._drawChart();
+    },
+    updateChart: function() {
+      return this._customChart.updateData();
+    },
+    _getStoreConfig: function() {
+      var fetchFields;
+      fetchFields = ['_UnformattedID'].concat(this.getSetting('fetchFields').split(','));
+      return {
+        find: {
+          '_TypeHierarchy': this.getSetting('type'),
+          '_ProjectHierarchy': this.getContext().get('project').ObjectID,
+          'Children': null
+        },
+        fetch: fetchFields,
+        fields: fetchFields,
+        hydrate: fetchFields,
+        listeners: {
+          load: function() {
+            this.down('#chartcontainer').add(this._customChart);
+            return this.down('#chartcontainer').setLoading(false);
+          },
+          scope: this
+        }
+      };
+    },
+    _getCalculatorConfig: function() {
+      return {
+        artifactType: this.getSetting('type'),
+        additionalCode: this.getSetting('additionalCode'),
+        controls: this.down('#controls'),
+        filters: this.getSetting('filters'),
+        projectOid: this.getContext().get('project').ObjectID,
+        transformXdata: this.getSetting('xAxisDataTransformer'),
+        transformYdata: this.getSetting('yAxisDataTransformer'),
+        showTrendLine: this.getSetting('showTrendLine')
+      };
+    },
+    _transformObject: function(obj) {
+      var newObj;
+      if (obj == null) {
+        obj = {};
+      }
+      newObj = {};
+      _.forOwn(obj, function(value, key) {
+        return newObj[key] = _.isFunction(value) ? value.call(this) : _.isObject(value) ? this._transformObject(value) : value;
+      }, this);
+      return newObj;
+    },
+    _getXAxisConfig: function() {
+      return _.defaults(this._transformObject(this.getSetting('xAxis')), {
+        title: {
+          enabled: true,
+          text: this.getSetting('xAxisLabel')
+        },
+        startOnTick: true,
+        endOnTick: true,
+        showLastLabel: true
+      });
+    },
+    _getYAxisConfig: function() {
+      return _.defaults(this._transformObject(this.getSetting('yAxis')), {
+        yAxis: {
+          title: {
+            text: this.getSetting('yAxisLabel')
+          }
+        },
+        min: 0
+      });
+    },
+    _getChartConfig: function() {
+      return {
+        chart: {
+          type: 'scatter',
+          zoomType: 'xy'
+        },
+        title: {
+          text: this.getSetting('chartTitle')
+        },
+        xAxis: this._getXAxisConfig(),
+        yAxis: this._getYAxisConfig(),
+        plotOptions: {
+          line: {
+            enableMouseTracking: false,
+            marker: {
+              enabled: false
+            }
+          },
+          scatter: {
+            marker: {
+              radius: 5,
+              states: {
+                hover: {
+                  enabled: true,
+                  lineColor: 'rgb(100,100,100)'
+                }
+              },
+              symbol: 'circle'
+            },
+            states: {
+              hover: {
+                marker: {
+                  enabled: false
+                }
+              }
+            },
+            tooltip: {
+              headerFormat: '<b>{series.name}</b><br>',
+              pointFormat: this.getSetting('tooltipTpl')
+            }
+          },
+          series: {
+            allowPointSelect: true,
+            turboThreshold: 10000
+          }
+        }
+      };
+    },
+    _drawChart: function() {
+      this.down('#chartcontainer').setLoading();
+      return this._customChart = Ext.create('CustomChart', {
+        themename: this.getSetting('chartTheme'),
+        itemId: 'customChart',
+        storeConfig: this._getStoreConfig(),
+        calculatorType: 'CustomChartCalculator',
+        calculatorConfig: this._getCalculatorConfig(),
+        chartConfig: this._getChartConfig(),
+        listeners: {
+          chartRendered: function() {
+            return this.drawStats();
+          },
+          scope: this
+        }
+      });
+    },
+    drawStats: function() {
+      return this.down('#stats').update({
+        totalDataPoints: this._customChart.getTotalPoints()
+      });
+    },
+    getSettingsFields: function() {
+      return CustomChartSettings.getFields(this.getContext());
+    },
+    _hydrateHelpers: function() {
+      return _.assign(this, this.getSetting('helpers'));
+    },
+    _hydrateControls: function() {
+      var control, controls, controlsContainer, _i, _len;
+      controls = this.getSetting('controls');
+      controlsContainer = this.down('#controls');
+      for (_i = 0, _len = controls.length; _i < _len; _i++) {
+        control = controls[_i];
+        controlsContainer.add(control);
+      }
+      if (controls.length > 0) {
+        return controlsContainer.add({
+          text: 'Update',
+          itemId: 'updateButton',
+          margin: '5px 0 5px 20px',
+          xtype: 'button'
+        });
+      }
+    }
+  });
+
+}).call(this);
+
+(function() {
+  var Ext;
+
+  Ext = window.Ext4 || window.Ext;
+
+  Ext.define('CustomChart', {
+    extend: 'Rally.ui.chart.Chart',
+    _haveDataToRender: function() {
+      return true;
+    },
+    _getChart: function() {
+      return this.down('highchart');
+    },
+    _getChartData: function() {
+      return this.calculator.prepareChartData(this.loadedStores);
+    },
+    getTotalPoints: function() {
+      return this.chartData.series[0].data.length;
+    },
+    _clearData: function() {
+      var chart;
+      chart = this._getChart().chart;
+      while (chart.series.length) {
+        chart.series[0].remove(false);
+      }
+    },
+    updateData: function() {
+      var chart, series, _i, _len, _ref;
+      this.chartData = this._getChartData();
+      this._clearData();
+      chart = this._getChart().chart;
+      _ref = this.chartData.series;
+      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+        series = _ref[_i];
+        chart.addSeries(series, false);
+      }
+      chart.redraw();
+      return this.fireEvent('chartRendered', this);
+    },
+    _renderChart: function() {
+      Highcharts.setOptions(Ext.global["Highcharts" + this.themename + "Theme"]);
+      return this.down('#chart').add({
+        margin: 20,
+        xtype: 'highchart',
+        chartConfig: this.getChartConfig(),
+        series: this.chartData.series
+      });
+    }
+  });
+
+}).call(this);
+
+(function() {
+  var Ext;
+
+  Ext = window.Ext4 || window.Ext;
+
+  Ext.define('CustomChartCalculator', {
+    extend: 'Rally.data.lookback.calculator.BaseCalculator',
+    mixins: {
+      observable: "Ext.util.Observable"
+    },
+    filters: [],
+    constructor: function() {
+      this.mixins.observable.constructor.call(this);
+      this.callParent(arguments);
+      this._runAdditionalCode();
+    },
+    prepareChartData: function(store) {
+      var snapshots;
+      snapshots = _.pluck(store.data.items, 'raw');
+      snapshots = this._applyFilters(snapshots, this.filters);
+      return this.runCalculation(snapshots);
+    },
+    _applyFilters: function(data, filters) {
+      return _.reduce(filters, function(memo, filter) {
+        return _.filter(memo, filter, this);
+      }, data, this);
+    },
+    _runAdditionalCode: function() {
+      var code, _i, _len, _ref;
+      _ref = this.additionalCode;
+      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+        code = _ref[_i];
+        code.call(this);
+      }
+    },
+    transformXdata: function(snapshotsByOid) {
+      throw new Error('This method must be overridden');
+    },
+    transformYdata: function(snapshotsByOid) {
+      throw new Error('This method must be overridden');
+    },
+    runCalculation: function(snapshots) {
+      var chartData, groupedSnapshots, prefixTable, seriesData, xdata, ydata;
+      groupedSnapshots = _.groupBy(snapshots, function(snapshot) {
+        return snapshot.ObjectID;
+      });
+      xdata = this.transformXdata(groupedSnapshots);
+      ydata = this.transformYdata(groupedSnapshots);
+      prefixTable = {
+        HierarchicalRequirement: 'US',
+        Defect: 'DE',
+        Task: 'T'
+      };
+      seriesData = _.map(groupedSnapshots, function(snapshots, oid) {
+        var lastDate;
+        lastDate = snapshots[snapshots.length - 1]._ValidTo === "9999-01-01T00:00:00.000Z" ? new Date() : new Date(snapshots[snapshots.length - 1]._ValidTo);
+        return {
+          x: xdata[oid],
+          y: ydata[oid],
+          detailUrl: this._createDetailUrl(oid),
+          id: prefixTable[this.artifactType] + snapshots[0]._UnformattedID,
+          lastDate: lastDate
+        };
+      }, this);
+      chartData = {
+        series: [
+          {
+            name: 'Stories',
+            data: seriesData
+          }
+        ]
+      };
+      if (this.showTrendLine) {
+        chartData.series.push({
+          name: 'Trend Line',
+          data: this._fitTrendData(seriesData),
+          type: 'line'
+        });
+      }
+      return chartData;
+    },
+    _artifactDetailTable: {
+      HierarchicalRequirement: 'userstory',
+      Defect: 'defect',
+      Task: 'task'
+    },
+    _createDetailUrl: function(oid) {
+      return "https://rally1.rallydev.com/#/" + this.projectOid + "d/detail/" + this._artifactDetailTable[this.artifactType] + "/" + oid;
+    },
+    _fitTrendData: function(sourceData) {
+      var data;
+      return fitData((function() {
+        var _i, _len, _results;
+        _results = [];
+        for (_i = 0, _len = sourceData.length; _i < _len; _i++) {
+          data = sourceData[_i];
+          _results.push([data.x, data.y]);
+        }
+        return _results;
+      })()).data;
+    }
+  });
+
+}).call(this);
+
+HighchartsGridTheme = {
+    colors: ['#058DC7', '#50B432', '#ED561B', '#DDDF00', '#24CBE5', '#64E572', '#FF9655', '#FFF263', '#6AF9C4'],
+    chart: {
+        backgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 1, y2: 1 },
+            stops: [
+                [0, 'rgb(255, 255, 255)'],
+                [1, 'rgb(240, 240, 255)']
+            ]
+        },
+        borderWidth: 2,
+        plotBackgroundColor: 'rgba(255, 255, 255, .9)',
+        plotShadow: true,
+        plotBorderWidth: 1
+    },
+    title: {
+        style: {
+            color: '#000',
+            font: 'bold 16px "Trebuchet MS", Verdana, sans-serif'
+        }
+    },
+    subtitle: {
+        style: {
+            color: '#666666',
+            font: 'bold 12px "Trebuchet MS", Verdana, sans-serif'
+        }
+    },
+    xAxis: {
+        gridLineWidth: 1,
+        lineColor: '#000',
+        tickColor: '#000',
+        labels: {
+            style: {
+                color: '#000',
+                font: '11px Trebuchet MS, Verdana, sans-serif'
+            }
+        },
+        title: {
+            style: {
+                color: '#333',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                fontFamily: 'Trebuchet MS, Verdana, sans-serif'
+
+            }
+        }
+    },
+    yAxis: {
+        minorTickInterval: 'auto',
+        lineColor: '#000',
+        lineWidth: 1,
+        tickWidth: 1,
+        tickColor: '#000',
+        labels: {
+            style: {
+                color: '#000',
+                font: '11px Trebuchet MS, Verdana, sans-serif'
+            }
+        },
+        title: {
+            style: {
+                color: '#333',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                fontFamily: 'Trebuchet MS, Verdana, sans-serif'
+            }
+        }
+    },
+    legend: {
+        itemStyle: {
+            font: '9pt Trebuchet MS, Verdana, sans-serif',
+            color: 'black'
+
+        },
+        itemHoverStyle: {
+            color: '#039'
+        },
+        itemHiddenStyle: {
+            color: 'gray'
+        }
+    },
+    labels: {
+        style: {
+            color: '#99b'
+        }
+    },
+
+    navigation: {
+        buttonOptions: {
+            theme: {
+                stroke: '#CCCCCC'
+            }
+        }
+    }
+};
+
+HighchartsSkiesTheme = {
+    colors: ["#514F78", "#42A07B", "#9B5E4A", "#72727F", "#1F949A", "#82914E", "#86777F", "#42A07B"],
+    chart: {
+        className: 'skies',
+        borderWidth: 0,
+        plotShadow: true,
+        plotBackgroundImage: '/demo/gfx/skies.jpg',
+        plotBackgroundColor: {
+            linearGradient: [0, 0, 250, 500],
+            stops: [
+                [0, 'rgba(255, 255, 255, 1)'],
+                [1, 'rgba(255, 255, 255, 0)']
+            ]
+        },
+        plotBorderWidth: 1
+    },
+    title: {
+        style: {
+            color: '#3E576F',
+            font: '16px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+        }
+    },
+    subtitle: {
+        style: {
+            color: '#6D869F',
+            font: '12px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+        }
+    },
+    xAxis: {
+        gridLineWidth: 0,
+        lineColor: '#C0D0E0',
+        tickColor: '#C0D0E0',
+        labels: {
+            style: {
+                color: '#666',
+                fontWeight: 'bold'
+            }
+        },
+        title: {
+            style: {
+                color: '#666',
+                font: '12px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+            }
+        }
+    },
+    yAxis: {
+        alternateGridColor: 'rgba(255, 255, 255, .5)',
+        lineColor: '#C0D0E0',
+        tickColor: '#C0D0E0',
+        tickWidth: 1,
+        labels: {
+            style: {
+                color: '#666',
+                fontWeight: 'bold'
+            }
+        },
+        title: {
+            style: {
+                color: '#666',
+                font: '12px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+            }
+        }
+    },
+    legend: {
+        itemStyle: {
+            font: '9pt Trebuchet MS, Verdana, sans-serif',
+            color: '#3E576F'
+        },
+        itemHoverStyle: {
+            color: 'black'
+        },
+        itemHiddenStyle: {
+            color: 'silver'
+        }
+    },
+    labels: {
+        style: {
+            color: '#3E576F'
+        }
+    }
+};
+
+HighchartsGrayTheme = {
+    colors: ["#DDDF0D", "#7798BF", "#55BF3B", "#DF5353", "#aaeeee", "#ff0066", "#eeaaee",
+        "#55BF3B", "#DF5353", "#7798BF", "#aaeeee"],
+    chart: {
+        backgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0, 'rgb(96, 96, 96)'],
+                [1, 'rgb(16, 16, 16)']
+            ]
+        },
+        borderWidth: 0,
+        borderRadius: 15,
+        plotBackgroundColor: null,
+        plotShadow: false,
+        plotBorderWidth: 0
+    },
+    title: {
+        style: {
+            color: '#FFF',
+            font: '16px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+        }
+    },
+    subtitle: {
+        style: {
+            color: '#DDD',
+            font: '12px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+        }
+    },
+    xAxis: {
+        gridLineWidth: 0,
+        lineColor: '#999',
+        tickColor: '#999',
+        labels: {
+            style: {
+                color: '#999',
+                fontWeight: 'bold'
+            }
+        },
+        title: {
+            style: {
+                color: '#AAA',
+                font: 'bold 12px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+            }
+        }
+    },
+    yAxis: {
+        alternateGridColor: null,
+        minorTickInterval: null,
+        gridLineColor: 'rgba(255, 255, 255, .1)',
+        minorGridLineColor: 'rgba(255,255,255,0.07)',
+        lineWidth: 0,
+        tickWidth: 0,
+        labels: {
+            style: {
+                color: '#999',
+                fontWeight: 'bold'
+            }
+        },
+        title: {
+            style: {
+                color: '#AAA',
+                font: 'bold 12px Lucida Grande, Lucida Sans Unicode, Verdana, Arial, Helvetica, sans-serif'
+            }
+        }
+    },
+    legend: {
+        itemStyle: {
+            color: '#CCC'
+        },
+        itemHoverStyle: {
+            color: '#FFF'
+        },
+        itemHiddenStyle: {
+            color: '#333'
+        }
+    },
+    labels: {
+        style: {
+            color: '#CCC'
+        }
+    },
+    tooltip: {
+        backgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0, 'rgba(96, 96, 96, .8)'],
+                [1, 'rgba(16, 16, 16, .8)']
+            ]
+        },
+        borderWidth: 0,
+        style: {
+            color: '#FFF'
+        }
+    },
+
+
+    plotOptions: {
+        series: {
+            shadow: true
+        },
+        line: {
+            dataLabels: {
+                color: '#CCC'
+            },
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        spline: {
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        scatter: {
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        candlestick: {
+            lineColor: 'white'
+        }
+    },
+
+    toolbar: {
+        itemStyle: {
+            color: '#CCC'
+        }
+    },
+
+    navigation: {
+        buttonOptions: {
+            symbolStroke: '#DDDDDD',
+            hoverSymbolStroke: '#FFFFFF',
+            theme: {
+                fill: {
+                    linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                    stops: [
+                        [0.4, '#606060'],
+                        [0.6, '#333333']
+                    ]
+                },
+                stroke: '#000000'
+            }
+        }
+    },
+
+    // scroll charts
+    rangeSelector: {
+        buttonTheme: {
+            fill: {
+                linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                stops: [
+                    [0.4, '#888'],
+                    [0.6, '#555']
+                ]
+            },
+            stroke: '#000000',
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold'
+            },
+            states: {
+                hover: {
+                    fill: {
+                        linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                        stops: [
+                            [0.4, '#BBB'],
+                            [0.6, '#888']
+                        ]
+                    },
+                    stroke: '#000000',
+                    style: {
+                        color: 'white'
+                    }
+                },
+                select: {
+                    fill: {
+                        linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                        stops: [
+                            [0.1, '#000'],
+                            [0.3, '#333']
+                        ]
+                    },
+                    stroke: '#000000',
+                    style: {
+                        color: 'yellow'
+                    }
+                }
+            }
+        },
+        inputStyle: {
+            backgroundColor: '#333',
+            color: 'silver'
+        },
+        labelStyle: {
+            color: 'silver'
+        }
+    },
+
+    navigator: {
+        handles: {
+            backgroundColor: '#666',
+            borderColor: '#AAA'
+        },
+        outlineColor: '#CCC',
+        maskFill: 'rgba(16, 16, 16, 0.5)',
+        series: {
+            color: '#7798BF',
+            lineColor: '#A6C7ED'
+        }
+    },
+
+    scrollbar: {
+        barBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0.4, '#888'],
+                [0.6, '#555']
+            ]
+        },
+        barBorderColor: '#CCC',
+        buttonArrowColor: '#CCC',
+        buttonBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0.4, '#888'],
+                [0.6, '#555']
+            ]
+        },
+        buttonBorderColor: '#CCC',
+        rifleColor: '#FFF',
+        trackBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0, '#000'],
+                [1, '#333']
+            ]
+        },
+        trackBorderColor: '#666'
+    },
+
+    // special colors for some of the demo examples
+    legendBackgroundColor: 'rgba(48, 48, 48, 0.8)',
+    legendBackgroundColorSolid: 'rgb(70, 70, 70)',
+    dataLabelsColor: '#444',
+    textColor: '#E0E0E0',
+    maskColor: 'rgba(255,255,255,0.3)'
+};
+
+HighchartsDarkBlueTheme = {
+    colors: ["#DDDF0D", "#55BF3B", "#DF5353", "#7798BF", "#aaeeee", "#ff0066", "#eeaaee",
+        "#55BF3B", "#DF5353", "#7798BF", "#aaeeee"],
+    chart: {
+        backgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 1, y2: 1 },
+            stops: [
+                [0, 'rgb(48, 48, 96)'],
+                [1, 'rgb(0, 0, 0)']
+            ]
+        },
+        borderColor: '#000000',
+        borderWidth: 2,
+        className: 'dark-container',
+        plotBackgroundColor: 'rgba(255, 255, 255, .1)',
+        plotBorderColor: '#CCCCCC',
+        plotBorderWidth: 1
+    },
+    title: {
+        style: {
+            color: '#C0C0C0',
+            font: 'bold 16px "Trebuchet MS", Verdana, sans-serif'
+        }
+    },
+    subtitle: {
+        style: {
+            color: '#666666',
+            font: 'bold 12px "Trebuchet MS", Verdana, sans-serif'
+        }
+    },
+    xAxis: {
+        gridLineColor: '#333333',
+        gridLineWidth: 1,
+        labels: {
+            style: {
+                color: '#A0A0A0'
+            }
+        },
+        lineColor: '#A0A0A0',
+        tickColor: '#A0A0A0',
+        title: {
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                fontFamily: 'Trebuchet MS, Verdana, sans-serif'
+
+            }
+        }
+    },
+    yAxis: {
+        gridLineColor: '#333333',
+        labels: {
+            style: {
+                color: '#A0A0A0'
+            }
+        },
+        lineColor: '#A0A0A0',
+        minorTickInterval: null,
+        tickColor: '#A0A0A0',
+        tickWidth: 1,
+        title: {
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                fontFamily: 'Trebuchet MS, Verdana, sans-serif'
+            }
+        }
+    },
+    tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        style: {
+            color: '#F0F0F0'
+        }
+    },
+    toolbar: {
+        itemStyle: {
+            color: 'silver'
+        }
+    },
+    plotOptions: {
+        line: {
+            dataLabels: {
+                color: '#CCC'
+            },
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        spline: {
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        scatter: {
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        candlestick: {
+            lineColor: 'white'
+        }
+    },
+    legend: {
+        itemStyle: {
+            font: '9pt Trebuchet MS, Verdana, sans-serif',
+            color: '#A0A0A0'
+        },
+        itemHoverStyle: {
+            color: '#FFF'
+        },
+        itemHiddenStyle: {
+            color: '#444'
+        }
+    },
+    credits: {
+        style: {
+            color: '#666'
+        }
+    },
+    labels: {
+        style: {
+            color: '#CCC'
+        }
+    },
+
+    navigation: {
+        buttonOptions: {
+            symbolStroke: '#DDDDDD',
+            hoverSymbolStroke: '#FFFFFF',
+            theme: {
+                fill: {
+                    linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                    stops: [
+                        [0.4, '#606060'],
+                        [0.6, '#333333']
+                    ]
+                },
+                stroke: '#000000'
+            }
+        }
+    },
+
+    // scroll charts
+    rangeSelector: {
+        buttonTheme: {
+            fill: {
+                linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                stops: [
+                    [0.4, '#888'],
+                    [0.6, '#555']
+                ]
+            },
+            stroke: '#000000',
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold'
+            },
+            states: {
+                hover: {
+                    fill: {
+                        linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                        stops: [
+                            [0.4, '#BBB'],
+                            [0.6, '#888']
+                        ]
+                    },
+                    stroke: '#000000',
+                    style: {
+                        color: 'white'
+                    }
+                },
+                select: {
+                    fill: {
+                        linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                        stops: [
+                            [0.1, '#000'],
+                            [0.3, '#333']
+                        ]
+                    },
+                    stroke: '#000000',
+                    style: {
+                        color: 'yellow'
+                    }
+                }
+            }
+        },
+        inputStyle: {
+            backgroundColor: '#333',
+            color: 'silver'
+        },
+        labelStyle: {
+            color: 'silver'
+        }
+    },
+
+    navigator: {
+        handles: {
+            backgroundColor: '#666',
+            borderColor: '#AAA'
+        },
+        outlineColor: '#CCC',
+        maskFill: 'rgba(16, 16, 16, 0.5)',
+        series: {
+            color: '#7798BF',
+            lineColor: '#A6C7ED'
+        }
+    },
+
+    scrollbar: {
+        barBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0.4, '#888'],
+                [0.6, '#555']
+            ]
+        },
+        barBorderColor: '#CCC',
+        buttonArrowColor: '#CCC',
+        buttonBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0.4, '#888'],
+                [0.6, '#555']
+            ]
+        },
+        buttonBorderColor: '#CCC',
+        rifleColor: '#FFF',
+        trackBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0, '#000'],
+                [1, '#333']
+            ]
+        },
+        trackBorderColor: '#666'
+    },
+
+    // special colors for some of the
+    legendBackgroundColor: 'rgba(0, 0, 0, 0.5)',
+    legendBackgroundColorSolid: 'rgb(35, 35, 70)',
+    dataLabelsColor: '#444',
+    textColor: '#C0C0C0',
+    maskColor: 'rgba(255,255,255,0.3)'
+};
+
+HighchartsDarkGreenTheme = {
+    colors: ["#DDDF0D", "#55BF3B", "#DF5353", "#7798BF", "#aaeeee", "#ff0066", "#eeaaee",
+        "#55BF3B", "#DF5353", "#7798BF", "#aaeeee"],
+    chart: {
+        backgroundColor: {
+            linearGradient: [0, 0, 250, 500],
+            stops: [
+                [0, 'rgb(48, 96, 48)'],
+                [1, 'rgb(0, 0, 0)']
+            ]
+        },
+        borderColor: '#000000',
+        borderWidth: 2,
+        className: 'dark-container',
+        plotBackgroundColor: 'rgba(255, 255, 255, .1)',
+        plotBorderColor: '#CCCCCC',
+        plotBorderWidth: 1
+    },
+    title: {
+        style: {
+            color: '#C0C0C0',
+            font: 'bold 16px "Trebuchet MS", Verdana, sans-serif'
+        }
+    },
+    subtitle: {
+        style: {
+            color: '#666666',
+            font: 'bold 12px "Trebuchet MS", Verdana, sans-serif'
+        }
+    },
+    xAxis: {
+        gridLineColor: '#333333',
+        gridLineWidth: 1,
+        labels: {
+            style: {
+                color: '#A0A0A0'
+            }
+        },
+        lineColor: '#A0A0A0',
+        tickColor: '#A0A0A0',
+        title: {
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                fontFamily: 'Trebuchet MS, Verdana, sans-serif'
+
+            }
+        }
+    },
+    yAxis: {
+        gridLineColor: '#333333',
+        labels: {
+            style: {
+                color: '#A0A0A0'
+            }
+        },
+        lineColor: '#A0A0A0',
+        minorTickInterval: null,
+        tickColor: '#A0A0A0',
+        tickWidth: 1,
+        title: {
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                fontFamily: 'Trebuchet MS, Verdana, sans-serif'
+            }
+        }
+    },
+    tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        style: {
+            color: '#F0F0F0'
+        }
+    },
+    toolbar: {
+        itemStyle: {
+            color: 'silver'
+        }
+    },
+    plotOptions: {
+        line: {
+            dataLabels: {
+                color: '#CCC'
+            },
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        spline: {
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        scatter: {
+            marker: {
+                lineColor: '#333'
+            }
+        },
+        candlestick: {
+            lineColor: 'white'
+        }
+    },
+    legend: {
+        itemStyle: {
+            font: '9pt Trebuchet MS, Verdana, sans-serif',
+            color: '#A0A0A0'
+        },
+        itemHoverStyle: {
+            color: '#FFF'
+        },
+        itemHiddenStyle: {
+            color: '#444'
+        }
+    },
+    credits: {
+        style: {
+            color: '#666'
+        }
+    },
+    labels: {
+        style: {
+            color: '#CCC'
+        }
+    },
+
+
+    navigation: {
+        buttonOptions: {
+            symbolStroke: '#DDDDDD',
+            hoverSymbolStroke: '#FFFFFF',
+            theme: {
+                fill: {
+                    linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                    stops: [
+                        [0.4, '#606060'],
+                        [0.6, '#333333']
+                    ]
+                },
+                stroke: '#000000'
+            }
+        }
+    },
+
+    // scroll charts
+    rangeSelector: {
+        buttonTheme: {
+            fill: {
+                linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                stops: [
+                    [0.4, '#888'],
+                    [0.6, '#555']
+                ]
+            },
+            stroke: '#000000',
+            style: {
+                color: '#CCC',
+                fontWeight: 'bold'
+            },
+            states: {
+                hover: {
+                    fill: {
+                        linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                        stops: [
+                            [0.4, '#BBB'],
+                            [0.6, '#888']
+                        ]
+                    },
+                    stroke: '#000000',
+                    style: {
+                        color: 'white'
+                    }
+                },
+                select: {
+                    fill: {
+                        linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                        stops: [
+                            [0.1, '#000'],
+                            [0.3, '#333']
+                        ]
+                    },
+                    stroke: '#000000',
+                    style: {
+                        color: 'yellow'
+                    }
+                }
+            }
+        },
+        inputStyle: {
+            backgroundColor: '#333',
+            color: 'silver'
+        },
+        labelStyle: {
+            color: 'silver'
+        }
+    },
+
+    navigator: {
+        handles: {
+            backgroundColor: '#666',
+            borderColor: '#AAA'
+        },
+        outlineColor: '#CCC',
+        maskFill: 'rgba(16, 16, 16, 0.5)',
+        series: {
+            color: '#7798BF',
+            lineColor: '#A6C7ED'
+        }
+    },
+
+    scrollbar: {
+        barBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0.4, '#888'],
+                [0.6, '#555']
+            ]
+        },
+        barBorderColor: '#CCC',
+        buttonArrowColor: '#CCC',
+        buttonBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0.4, '#888'],
+                [0.6, '#555']
+            ]
+        },
+        buttonBorderColor: '#CCC',
+        rifleColor: '#FFF',
+        trackBackgroundColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+                [0, '#000'],
+                [1, '#333']
+            ]
+        },
+        trackBorderColor: '#666'
+    },
+
+    // special colors for some of the
+    legendBackgroundColor: 'rgba(0, 0, 0, 0.5)',
+    legendBackgroundColorSolid: 'rgb(35, 35, 70)',
+    dataLabelsColor: '#444',
+    textColor: '#C0C0C0',
+    maskColor: 'rgba(255,255,255,0.3)'
+};
+
+
+
+(function() {
+  var Ext;
+
+  Ext = window.Ext4 || window.Ext;
+
+  Ext.define('CustomChartSettings', {
+    singleton: true,
+    getFields: function(context) {
+      return [
+        {
+          name: 'chartTitle',
+          fieldLabel: 'Chart Title',
+          xtype: 'rallytextfield',
+          width: 300
+        }, {
+          name: 'xAxisLabel',
+          fieldLabel: 'X-Axis Label',
+          xtype: 'rallytextfield',
+          width: 300
+        }, {
+          name: 'yAxisLabel',
+          fieldLabel: 'Y-Axis Label',
+          xtype: 'rallytextfield',
+          width: 300
+        }, {
+          name: 'chartTheme',
+          fieldLabel: 'Theme Name',
+          xtype: 'combobox',
+          queryMode: 'local',
+          displayField: 'displayName',
+          valueField: 'themeName',
+          store: {
+            fields: ['displayName', 'themeName'],
+            data: [
+              {
+                displayName: 'Dark Blue',
+                themeName: 'DarkBlue'
+              }, {
+                displayName: 'Dark Green',
+                themeName: 'DarkGreen'
+              }, {
+                displayName: 'Grid',
+                themeName: 'Grid'
+              }, {
+                displayName: 'Skies',
+                themeName: 'Skies'
+              }, {
+                displayName: 'Gray',
+                themeName: 'Gray'
+              }
+            ]
+          }
+        }, {
+          name: 'type',
+          xtype: 'rallycombobox',
+          shouldRespondToScopeChange: true,
+          context: context,
+          storeConfig: {
+            model: 'TypeDefinition',
+            sorters: [
+              {
+                property: 'Name'
+              }
+            ],
+            fetch: ['DisplayName', 'ElementName', 'TypePath'],
+            filters: [
+              {
+                property: 'Creatable',
+                value: true
+              }
+            ],
+            autoLoad: false,
+            remoteSort: false
+          },
+          displayField: 'DisplayName',
+          valueField: 'TypePath',
+          listeners: {
+            select: function(combo, records) {
+              return combo.fireEvent('typeselected', records[0].get('TypePath'), combo.context);
+            },
+            ready: function(combo) {
+              combo.store.sort('DisplayName');
+              return Rally.data.ModelFactory.getModels({
+                context: combo.context.getDataContext(),
+                types: _.map(combo.store.getRange(), function(record) {
+                  return record.get('TypePath');
+                }),
+                success: function(models) {
+                  combo.store.filterBy(function(record) {
+                    return models[record.get('TypePath')].hasField('FormattedID');
+                  });
+                  return combo.fireEvent('typeselected', combo.getRecord().get('TypePath'), combo.context);
+                }
+              });
+            }
+          },
+          bubbleEvents: ['typeselected'],
+          readyEvent: 'ready',
+          handlesEvents: {
+            projectscopechanged: function(context) {
+              return this.refreshWithNewContext(context);
+            }
+          }
+        }, {
+          name: 'fetchFields',
+          fieldLabel: 'Fetch Fields',
+          xtype: 'rallyfieldpicker',
+          readyEvent: 'ready',
+          handlesEvents: {
+            typeselected: function(type, context) {
+              return this.refreshWithNewModelTypes([type], context);
+            }
+          },
+          width: 300,
+          margin: '0 0 255 0',
+          storeConfig: {
+            autoLoad: false
+          }
+        }
+      ];
+    }
+  });
+
+}).call(this);
+
+/**
+ * Code for regression extracted from jqplot.trendline.js
+ *
+ * Version: 1.0.0a_r701
+ *
+ * Copyright (c) 2009-2011 Chris Leonello
+ * jqPlot is currently available for use in all personal or commercial projects
+ * under both the MIT (http://www.opensource.org/licenses/mit-license.php) and GPL
+ * version 2.0 (http://www.gnu.org/licenses/gpl-2.0.html) licenses. This means that you can
+ * choose the license that best suits your project and use it accordingly.
+ *
+ **/
+
+function regression(x, y, typ) {
+  var type = (typ == null) ? 'linear' : typ;
+  var N = x.length;
+  var slope;
+  var intercept;
+  var SX = 0;
+  var SY = 0;
+  var SXX = 0;
+  var SXY = 0;
+  var SYY = 0;
+  var Y = [];
+  var X = [];
+
+  if (type == 'linear') {
+    X = x;
+    Y = y;
+  }
+  else if (type == 'exp' || type == 'exponential') {
+    for (var i = 0; i < y.length; i++) {
+      // ignore points <= 0, log undefined.
+      if (y[i] <= 0) {
+        N--;
+      }
+      else {
+        X.push(x[i]);
+        Y.push(Math.log(y[i]));
+      }
+    }
+  }
+
+  for (var i = 0; i < N; i++) {
+    SX = SX + X[i];
+    SY = SY + Y[i];
+    SXY = SXY + X[i] * Y[i];
+    SXX = SXX + X[i] * X[i];
+    SYY = SYY + Y[i] * Y[i];
+  }
+
+  slope = (N * SXY - SX * SY) / (N * SXX - SX * SX);
+  intercept = (SY - slope * SX) / N;
+
+  return [slope, intercept];
+}
+
+function linearRegression(X, Y) {
+  var ret;
+  ret = regression(X, Y, 'linear');
+  return [ret[0], ret[1]];
+}
+
+function expRegression(X, Y) {
+  var ret;
+  var x = X;
+  var y = Y;
+  ret = regression(x, y, 'exp');
+  var base = Math.exp(ret[0]);
+  var coeff = Math.exp(ret[1]);
+  return [base, coeff];
+}
+
+function fitData(data, typ) {
+  var type = (typ == null) ? 'linear' : typ;
+  var ret;
+  var res;
+  var x = [];
+  var y = [];
+  var ypred = [];
+
+  for (i = 0; i < data.length; i++) {
+    if (data[i] != null && data[i][0] != null && data[i][1] != null) {
+      x.push(data[i][0]);
+      y.push(data[i][1]);
+    }
+  }
+
+  if (type == 'linear') {
+    ret = linearRegression(x, y);
+    for (var i = 0; i < x.length; i++) {
+      res = ret[0] * x[i] + ret[1];
+      ypred.push([x[i], res]);
+    }
+  }
+  else if (type == 'exp' || type == 'exponential') {
+    ret = expRegression(x, y);
+    for (var i = 0; i < x.length; i++) {
+      res = ret[1] * Math.pow(ret[0], x[i]);
+      ypred.push([x[i], res]);
+    }
+  }
+  return {
+    data: ypred,
+    slope: ret[0],
+    intercept: ret[1]
+  };
+}
+
+
+            
+            Rally.launchApp('CustomChartApp', {
+                name:"custom-chart",
+                parentRepos:""
+            });
+
+        });
+    </script>
+
+
+
+
+    <style type="text/css">
+.app {
+     /* Add app styles here */
+}
+
+    </style>
+
+</head>
+<body></body>
+</html>

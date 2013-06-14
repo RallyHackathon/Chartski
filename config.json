@@ -1,0 +1,18 @@
+{
+    "name": "custom-chart",
+    "className": "CustomChartApp",
+    "server": "https://rally1.rallydev.com",
+    "sdk": "2.0rc1",
+    "remote_javascript": [],
+    "javascript": [
+        "src/App.js",
+        "src/HighchartsThemes.js",
+        "src/CustomChart.js",
+        "src/CustomChartCalculator.js",
+        "src/regression.js"
+    ],
+    "remote_css": [],
+    "css": [
+        "styles/app.css"
+    ]
+}
