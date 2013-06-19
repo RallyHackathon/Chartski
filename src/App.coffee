@@ -6,7 +6,6 @@ Ext.define 'CustomChartApp',
     defaultSettings:
       chartTitle: 'Story Size Versus Cycle Time'
       chartTheme: 'DarkBlue'
-      type: 'HierarchicalRequirement'
       tooltipTpl: '<a target="_blank" href="{point.detailUrl}">{point.id}</a><br>Estimate: {point.x}<br>Cycle Time: {point.y}<br>End Date: {point.lastDate}'
       showTrendLine: true
 
@@ -15,17 +14,73 @@ Ext.define 'CustomChartApp',
       xAxisLabel: 'Estimated Size'
       yAxisLabel: 'Cycle Time!'
 
-      xAxis:
-        min: -> @down('#storySizeField').getValues()[0]
-        labels:
-          enabled: -> !@isSingleStorySize()
-        title:
-          text: -> if @isSingleStorySize() then '' else 'Estimated Size'
+      type: 'HierarchicalRequirement'
 
-      yAxis:
-        title:
-          text: 'Cycle Time'
+#     Priority vs PlanEstimate
+#      type: 'Defect'
 
+#      xAxisDataTransformer: (snapshotsByOid) ->
+#        data = {}
+#
+#        _.each snapshotsByOid, (snapshots, oid) ->
+#          debugger
+#          data[oid] = snapshots[snapshots.length-1].PlanEstimate || Math.floor(Math.pow((Math.random() * 10) + 1, 2))
+#
+#        data
+
+#      yAxisDataTransformer: (snapshotsByOid) ->
+#        data = {}
+#
+#        _.each snapshotsByOid, (snapshots, oid) ->
+#          debugger
+#          data[oid] = snapshots[snapshots.length-1].Priority || Math.floor Math.pow((Math.random() * 5) + 1, 3)
+#
+#        data
+
+#      filters: [
+#        (item) ->
+#          debugger
+#          startingPriorityValue = parseInt(@priorities[@controls.down('#startingPriorityField').value], 10)
+#          endingPriorityValue = parseInt(@priorities[@controls.down('#endingPriorityField').value], 10)
+#          itemPriorityValue = if item.Priority then parseInt(@priorities[item.Priority], 10) else Math.floor(Math.random() * 5)
+#          startingPriorityValue <= itemPriorityValue <= endingPriorityValue
+#      ]
+
+#      additionalCode: [
+#        ->
+#          me = @
+#          Rally.data.ModelFactory.getModel
+#              type: if @artifactType is 'HierarchicalRequirement' then 'UserStory' else @artifactType
+#              success: (model) ->
+#                field = model.getField 'Priority'
+#                field.getAllowedValueStore().load
+#                  callback: (allowedValues) ->
+#                    allowedValues = [allowedValues[0]].concat allowedValues[1...allowedValues.length].reverse()
+#                    me.priorities = _(allowedValues).pluck('data').pluck('StringValue').invert().value()
+#                    me.priorities['None'] = 0
+#      ]
+
+#      controls: [
+#        {
+#          fieldLabel: 'Starting Priority'
+#          itemId: 'startingPriorityField'
+#          padding: '5px 0 5px 20px'
+#          xtype: 'rallyfieldvaluecombobox'
+#          model: -> if @getSetting('type') is 'HierarchicalRequirement' then 'UserStory' else @getSetting 'type'
+#          field: 'Priority'
+#        }
+#        {
+#          fieldLabel: 'Ending Priority'
+#          itemId: 'endingPriorityField'
+#          padding: '5px 0 5px 20px'
+#          xtype: 'rallyfieldvaluecombobox'
+#          model: -> if @getSetting('type') is 'HierarchicalRequirement' then 'UserStory' else @getSetting 'type'
+#          field: 'Priority'
+#          defaultSelectionToFirst: false
+#        }
+#      ]
+
+#      Cycletime Chart
 
       xAxisDataTransformer: (snapshotsByOid) ->
         data = {}
@@ -67,7 +122,7 @@ Ext.define 'CustomChartApp',
           startingStateValue = parseInt(@scheduleStates[@controls.down('#startingStateField').value], 10)
           endingStateValue = parseInt(@scheduleStates[@controls.down('#endingStateField').value], 10)
           itemStateValue = parseInt(@scheduleStates[item.ScheduleState], 10)
-          startingStateValue < itemStateValue < endingStateValue
+          startingStateValue <= itemStateValue <= endingStateValue
       ]
 
       helpers:
@@ -79,7 +134,7 @@ Ext.define 'CustomChartApp',
         ->
           me = @
           Rally.data.ModelFactory.getModel
-              type: if @artifactType is 'HierarchicalRequirement' then 'UserStory' else artifactType
+              type: if @artifactType is 'HierarchicalRequirement' then 'UserStory' else @artifactType
               success: (model) ->
                 field = model.getField 'ScheduleState'
                 field.getAllowedValueStore().load
@@ -201,22 +256,6 @@ Ext.define 'CustomChartApp',
 
     newObj
 
-  _getXAxisConfig: ->
-    _.defaults @_transformObject(@getSetting('xAxis')),
-      title:
-        enabled: true
-        text: @getSetting 'xAxisLabel'
-      startOnTick: true
-      endOnTick: true
-      showLastLabel: true
-
-  _getYAxisConfig: ->
-    _.defaults @_transformObject(@getSetting('yAxis')),
-      yAxis:
-        title:
-          text: @getSetting 'yAxisLabel'
-      min: 0
-
   _getChartConfig: ->
 
     chart:
@@ -226,8 +265,12 @@ Ext.define 'CustomChartApp',
     title:
       text: @getSetting 'chartTitle'
 
-    xAxis: @_getXAxisConfig()
-    yAxis: @_getYAxisConfig()
+    xAxis:
+      title:
+        text: @getSetting 'xAxisLabel'
+    yAxis:
+      title:
+        text: @getSetting 'yAxisLabel'
 
     plotOptions:
       line:

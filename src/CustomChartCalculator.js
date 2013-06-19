@@ -9,6 +9,7 @@
       observable: "Ext.util.Observable"
     },
     filters: [],
+    additionalCode: [],
     constructor: function() {
       this.mixins.observable.constructor.call(this);
       this.callParent(arguments);
@@ -27,10 +28,12 @@
     },
     _runAdditionalCode: function() {
       var code, _i, _len, _ref;
-      _ref = this.additionalCode;
-      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-        code = _ref[_i];
-        code.call(this);
+      if (this.additionalCode) {
+        _ref = this.additionalCode;
+        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+          code = _ref[_i];
+          code.call(this);
+        }
       }
     },
     transformXdata: function(snapshotsByOid) {

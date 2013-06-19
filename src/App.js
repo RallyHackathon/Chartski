@@ -6,36 +6,12 @@
       defaultSettings: {
         chartTitle: 'Story Size Versus Cycle Time',
         chartTheme: 'DarkBlue',
-        type: 'HierarchicalRequirement',
         tooltipTpl: '<a target="_blank" href="{point.detailUrl}">{point.id}</a><br>Estimate: {point.x}<br>Cycle Time: {point.y}<br>End Date: {point.lastDate}',
         showTrendLine: true,
         fetchFields: 'PlanEstimate,ScheduleState',
         xAxisLabel: 'Estimated Size',
         yAxisLabel: 'Cycle Time!',
-        xAxis: {
-          min: function() {
-            return this.down('#storySizeField').getValues()[0];
-          },
-          labels: {
-            enabled: function() {
-              return !this.isSingleStorySize();
-            }
-          },
-          title: {
-            text: function() {
-              if (this.isSingleStorySize()) {
-                return '';
-              } else {
-                return 'Estimated Size';
-              }
-            }
-          }
-        },
-        yAxis: {
-          title: {
-            text: 'Cycle Time'
-          }
-        },
+        type: 'HierarchicalRequirement',
         xAxisDataTransformer: function(snapshotsByOid) {
           var data;
           data = {};
@@ -77,7 +53,7 @@
             startingStateValue = parseInt(this.scheduleStates[this.controls.down('#startingStateField').value], 10);
             endingStateValue = parseInt(this.scheduleStates[this.controls.down('#endingStateField').value], 10);
             itemStateValue = parseInt(this.scheduleStates[item.ScheduleState], 10);
-            return (startingStateValue < itemStateValue && itemStateValue < endingStateValue);
+            return (startingStateValue <= itemStateValue && itemStateValue <= endingStateValue);
           }
         ],
         helpers: {
@@ -92,7 +68,7 @@
             var me;
             me = this;
             return Rally.data.ModelFactory.getModel({
-              type: this.artifactType === 'HierarchicalRequirement' ? 'UserStory' : artifactType,
+              type: this.artifactType === 'HierarchicalRequirement' ? 'UserStory' : this.artifactType,
               success: function(model) {
                 var field;
                 field = model.getField('ScheduleState');
@@ -214,27 +190,6 @@
       }, this);
       return newObj;
     },
-    _getXAxisConfig: function() {
-      return _.defaults(this._transformObject(this.getSetting('xAxis')), {
-        title: {
-          enabled: true,
-          text: this.getSetting('xAxisLabel')
-        },
-        startOnTick: true,
-        endOnTick: true,
-        showLastLabel: true
-      });
-    },
-    _getYAxisConfig: function() {
-      return _.defaults(this._transformObject(this.getSetting('yAxis')), {
-        yAxis: {
-          title: {
-            text: this.getSetting('yAxisLabel')
-          }
-        },
-        min: 0
-      });
-    },
     _getChartConfig: function() {
       return {
         chart: {
@@ -244,8 +199,16 @@
         title: {
           text: this.getSetting('chartTitle')
         },
-        xAxis: this._getXAxisConfig(),
-        yAxis: this._getYAxisConfig(),
+        xAxis: {
+          title: {
+            text: this.getSetting('xAxisLabel')
+          }
+        },
+        yAxis: {
+          title: {
+            text: this.getSetting('yAxisLabel')
+          }
+        },
         plotOptions: {
           line: {
             enableMouseTracking: false,

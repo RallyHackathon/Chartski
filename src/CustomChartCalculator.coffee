@@ -5,6 +5,7 @@ Ext.define 'CustomChartCalculator',
   mixins: { observable : "Ext.util.Observable" }
 
   filters: []
+  additionalCode: []
 
   constructor: ->
     @mixins.observable.constructor.call @
@@ -23,7 +24,7 @@ Ext.define 'CustomChartCalculator',
     , data, this
 
   _runAdditionalCode: ->
-    code.call @ for code in @additionalCode
+    code.call @ for code in @additionalCode if @additionalCode
     return
 
   transformXdata: (snapshotsByOid) -> throw new Error('This method must be overridden');
